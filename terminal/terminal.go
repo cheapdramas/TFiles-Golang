@@ -1,8 +1,9 @@
 package terminal
 
 import (
-    "syscall"
-    "unsafe"
+	"fmt"
+	"syscall"
+	"unsafe"
 )
 
 type Screen struct {
@@ -17,63 +18,58 @@ type winsize struct {
 	Ypixel uint16
 }
 
-
-func enableRawMode(fd int) (*syscall.Termios, error) {
-    var orig syscall.Termios // saved current settings
-    if _, _, err := syscall.Syscall6( // get terminal settings
-        syscall.SYS_IOCTL,
-        uintptr(fd),
-        uintptr(syscall.TCGETS),
-        uintptr(unsafe.Pointer(&orig)),
-        0, 0, 0,
-    ); err != 0 {
-        return nil, err
-    }
-
-    raw := orig
-
-    // отключаем canonical mode и echo
-    raw.Lflag &^= syscall.ICANON | syscall.ECHO | syscall.ISIG | syscall.IEXTEN
-    raw.Cc[syscall.VMIN] = 1  // минимальное количество байт для read
-    raw.Cc[syscall.VTIME] = 0 // таймаут для read
-
-    if _, _, err := syscall.Syscall6(
-        syscall.SYS_IOCTL,
-        uintptr(fd),
-        uintptr(syscall.TCSETS),
-        uintptr(unsafe.Pointer(&raw)),
-        0, 0, 0,
-    ); err != 0 {
-        return nil, err
-    }
-
-    return &orig, nil
-}
-
-func disableRawMode(fd int, orig *syscall.Termios) error {
-    if _, _, err := syscall.Syscall6(
-        syscall.SYS_IOCTL,
-        uintptr(fd),
-        uintptr(syscall.TCSETS),
-        uintptr(unsafe.Pointer(orig)),
-        0, 0, 0,
-    ); err != 0 {
-        return err
-    }
-    return nil
-}
-
-
-
 func NewScreen() *Screen {
 	return &Screen{}
 }
 
-func (s *Screen) Prepare() {
-	
+func enableRawMode() (*syscall.Termios, error) {
+	fd := int(syscall.Stdin)
+	var oldState syscall.Termios
+
+	// Get the current terminal attributes
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
+		uintptr(fd), uintptr(syscall.TCGETS),
+		uintptr(unsafe.Pointer(&oldState)))
+	if errno != 0 {
+		return nil, errno
+	}
+
+	// Modify the attributes to enable raw mode
+	newState := oldState
+	// Disable canonical mode (ICANON) and echo (ECHO)
+	newState.Lflag &^= syscall.ICANON | syscall.ECHO
+
+	// Set the new terminal attributes
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL,
+		uintptr(fd), uintptr(syscall.TCSETS),
+		uintptr(unsafe.Pointer(&newState)))
+	if errno != 0 {
+		return nil, errno
+	}
+
+	return &oldState, nil
 }
 
-//method for Screen
+func DisableRawMode(oldState *syscall.Termios) error {
+	fd := int(syscall.Stdin)
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
+		uintptr(fd), uintptr(syscall.TCSETS),
+		uintptr(unsafe.Pointer(oldState)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func (s *Screen) Prepare()(*syscall.Termios, error) {
+	orig_termios, err := enableRawMode()
+	if err != nil {
+		fmt.Println("Failed to enable raw mode! ")
+	}
+	return orig_termios, err
+}
+
+
 func (s *Screen) ScreenUpdateSize() { 
 	ws := &winsize{}	
 
@@ -90,4 +86,8 @@ func (s *Screen) ScreenUpdateSize() {
 
 	s.Width = ws.Col
 	s.Height = ws.Row
+}
+
+func Clear() {
+	fmt.Print("\033[H\033[2J")
 }
